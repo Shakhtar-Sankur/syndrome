@@ -26,8 +26,8 @@ Rules the project keeps:
 | Milestone | Scope | Status |
 |---|---|---|
 | M0 | Run IBM's Relay-BP on IBM's gross-code circuits and reproduce IBM's results | running |
-| M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | core written; identity check not yet run |
-| M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | planned |
+| M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | CPU build identical to IBM's on 12 of 12 shots so far |
+| M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | CUDA kernel written and compiled; first T4 run next |
 | M3 | Streaming (sliding-window) decoding, latency per round | planned |
 | M4 | Added to [parity](https://github.com/Shakhtar-Sankur/parity) next to BP-OSD and NVIDIA's decoder, on the same samples; write-up | planned |
 
@@ -40,7 +40,7 @@ results file (`examples/data/bicycle_bivariate_144_12_12_fine_ler_sweep.csv`): �
 300 relay legs, 80 + 60 iterations, stop after 5 solutions (Relay-BP-5), XZ decoding.
 
 The target is IBM's own row for p = 0.4%: **44 logical errors in 10,000 shots (4.4 × 10⁻³)**.
-The run on this machine is in progress (4 errors in the first 903 shots); the final count goes here.
+The run on this machine is in progress (15 errors in the first 3,164 shots, 4.7e-03); the final count goes here.
 
 **Why a GPU decoder is needed.** On one core of a 2.8 GHz Xeon VM, IBM's decoder takes
 **1.65 s per shot** at p = 0.3% ([`bench/m0_timing.py`](bench/m0_timing.py), setup excluded)
@@ -61,8 +61,17 @@ so a shot's result depends on the shots decoded before it. Thousands of shots de
 need each shot to be independent, so syndrome uses IBM's own `explicit_gammas` option: a fixed
 table of memory strengths, one row per leg. [`tests/check_against_ibm.py`](tests/check_against_ibm.py)
 decodes the same shots with IBM's Rust decoder (given the same table) and with syndrome, and
-compares decodings, float64 posteriors, success and iteration counts. It has not been run yet;
-its result goes here.
+compares decodings, float64 posteriors, success and iteration counts. On the gross code at p = 0.3%
+the CPU build agrees with IBM's decoder on **12 of 12 shots** in all four, every posterior bit for bit,
+with 5 to 14 relay legs per shot.
+
+## M2: the GPU kernel
+
+[`csrc/relay_bp_cuda.cu`](csrc/relay_bp_cuda.cu) runs the same steps with one thread block per shot and
+many shots in flight. It is compiled with `-fmad=false`, because a fused multiply-add rounds once where
+the reference rounds twice. [`bench/m2_gpu.py`](bench/m2_gpu.py) checks the GPU against IBM's decoder
+shot for shot, then times a batch and measures its logical error rate;
+[`notebooks/m2_kaggle.py`](notebooks/m2_kaggle.py) runs it on a Kaggle T4.
 
 ## License
 

@@ -35,7 +35,7 @@ class RelayParams:
 class Problem:
     """Check matrix H (checks x variables), as check-major edges plus a variable-major index."""
 
-    def __init__(self, check_matrix, error_priors):
+    def __init__(self, check_matrix, error_priors, observables_matrix=None):
         h = csr_matrix(check_matrix, dtype=np.uint8)
         h.sort_indices()
         self.n_checks, self.n_vars = h.shape
@@ -49,6 +49,16 @@ class Problem:
         self.col_ptr = np.zeros(self.n_vars + 1, dtype=np.int32)
         np.cumsum(np.bincount(self.edge_var, minlength=self.n_vars), out=self.col_ptr[1:])
         self.log_prior = log_prior_ratios(np.asarray(error_priors, dtype=np.float64))
+        if observables_matrix is None:
+            self.n_obs = 0
+            self.obs_row_ptr = np.zeros(1, dtype=np.int32)
+            self.obs_cols = np.zeros(0, dtype=np.int32)
+        else:
+            o = csr_matrix(observables_matrix, dtype=np.uint8)
+            o.sort_indices()
+            self.n_obs = o.shape[0]
+            self.obs_row_ptr = o.indptr.astype(np.int32)
+            self.obs_cols = o.indices.astype(np.int32)
 
     def gammas(self, params, rows, seed=0):
         lo, hi = params.gamma_interval
@@ -81,3 +91,37 @@ def decode_cpu(problem, params, gammas, syndromes, want_posteriors=False):
         params.stop_nconv, gam.shape[0], _ptr(gam, f64), n, _ptr(syn, u8), _ptr(dec, u8),
         _ptr(post, f64) if post is not None else None, _ptr(succ, i32), _ptr(iters, i32), _ptr(legs, i32))
     return dec, post, succ, iters, legs
+
+
+_CUDA = None
+
+
+def decode_cuda(problem, params, gammas, syndromes, want_decodings=False, want_posteriors=False,
+                slots=256, threads=256):
+    """Decode on the GPU. Returns (decodings, posteriors, observables, success, iterations, legs, kernel_ms)."""
+    global _CUDA
+    if _CUDA is None:
+        _CUDA = ctypes.CDLL(str(Path(__file__).resolve().parent.parent / "csrc" / "libsyndrome_cuda.so"))
+    syn = np.ascontiguousarray(syndromes, dtype=np.uint8)
+    n = syn.shape[0]
+    gam = np.ascontiguousarray(gammas, dtype=np.float64)
+    dec = np.zeros((n, problem.n_vars), dtype=np.uint8) if want_decodings else None
+    post = np.zeros((n, problem.n_vars), dtype=np.float64) if want_posteriors else None
+    obs = np.zeros((n, problem.n_obs), dtype=np.uint8) if problem.n_obs else None
+    succ, iters, legs = (np.zeros(n, dtype=np.int32) for _ in range(3))
+    ms = ctypes.c_float(0.0)
+    i32, f64, u8 = ctypes.c_int32, ctypes.c_double, ctypes.c_uint8
+    rc = _CUDA.relay_bp_decode_cuda(
+        problem.n_checks, problem.n_vars, problem.n_edges,
+        _ptr(problem.row_ptr, i32), _ptr(problem.edge_var, i32), _ptr(problem.col_ptr, i32),
+        _ptr(problem.col_edges, i32), _ptr(problem.log_prior, f64),
+        f64(params.alpha), f64(params.gamma0), params.pre_iter, params.num_sets, params.set_max_iter,
+        params.stop_nconv, gam.shape[0], _ptr(gam, f64),
+        problem.n_obs, _ptr(problem.obs_row_ptr, i32), _ptr(problem.obs_cols, i32),
+        n, _ptr(syn, u8),
+        _ptr(dec, u8) if dec is not None else None, _ptr(post, f64) if post is not None else None,
+        _ptr(obs, u8) if obs is not None else None,
+        _ptr(succ, i32), _ptr(iters, i32), _ptr(legs, i32), slots, threads, ctypes.byref(ms))
+    if rc != 0:
+        raise RuntimeError("relay_bp_decode_cuda failed")
+    return dec, post, obs, succ, iters, legs, ms.value
