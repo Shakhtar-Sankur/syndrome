@@ -25,7 +25,7 @@ Rules the project keeps:
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M0 | Run IBM's Relay-BP on IBM's gross-code circuits and reproduce IBM's results | running |
+| M0 | Run IBM's Relay-BP on IBM's gross-code circuits and reproduce IBM's results | done: 41 logical errors in 10,000 shots, against IBM's 44 |
 | M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | CPU build identical to IBM's on 12 of 12 shots so far |
 | M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | CUDA kernel written and compiled; first T4 run next |
 | M3 | Streaming (sliding-window) decoding, latency per round | planned |
@@ -40,11 +40,14 @@ results file (`examples/data/bicycle_bivariate_144_12_12_fine_ler_sweep.csv`): �
 300 relay legs, 80 + 60 iterations, stop after 5 solutions (Relay-BP-5), XZ decoding.
 
 The target is IBM's own row for p = 0.4%: **44 logical errors in 10,000 shots (4.4 × 10⁻³)**.
-The run on this machine is in progress (15 errors in the first 3,164 shots, 4.7e-03); the final count goes here.
+On this machine: **41 logical errors in 10,000 shots (4.1 × 10⁻³; 95% interval 2.9 to 5.6 × 10⁻³)**
+([`results/m0/m0_reference_p0.004_Z.csv`](results/m0/m0_reference_p0.004_Z.csv)). The two counts differ by
+less than their sampling error (two-proportion z = −0.33), so IBM's result reproduces here. The run was
+stopped once by a time limit and resumed from sinter's saved results, so the shots were decoded in two parts.
 
 **Why a GPU decoder is needed.** On one core of a 2.8 GHz Xeon VM, IBM's decoder takes
 **1.65 s per shot** at p = 0.3% ([`bench/m0_timing.py`](bench/m0_timing.py), setup excluded)
-and about **5.4 s per shot** at p = 0.4% (sinter's per-shot time in the M0 run). The decoding problem is large:
+and **5.1 s per shot** at p = 0.4% (sinter's per-shot time over the 10,000 shots of the M0 run). The decoding problem is large:
 1,728 detectors and 67,752 error mechanisms joined by 391,320 edges, and up to 300 relay legs.
 A superconducting device produces a round of syndromes every microsecond or so.
 
