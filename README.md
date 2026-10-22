@@ -60,7 +60,9 @@ magnitudes, Mem-BP priors, forward and backward variable sums in the same order,
 relayed between legs, and the stop-after-N-solutions rule with decoding weight as the tie-break.
 
 IBM's decoder draws each leg's memory strengths from one random generator shared by all shots,
-so a shot's result depends on the shots decoded before it. Thousands of shots decoded at once
+so a shot's result depends on the shots decoded before it, and IBM's serial and parallel batch
+modes give different decodings for the same shots (866 of 2,000 on a d = 5 surface code; reported
+upstream as [trmue/relay#47](https://github.com/trmue/relay/issues/47)). Thousands of shots decoded at once
 need each shot to be independent, so syndrome uses IBM's own `explicit_gammas` option: a fixed
 table of memory strengths, one row per leg. [`tests/check_against_ibm.py`](tests/check_against_ibm.py)
 decodes the same shots with IBM's Rust decoder (given the same table) and with syndrome, and
