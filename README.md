@@ -26,8 +26,8 @@ Rules the project keeps:
 | Milestone | Scope | Status |
 |---|---|---|
 | M0 | Run IBM's Relay-BP on IBM's gross-code circuits and reproduce IBM's results | done: 41 logical errors in 10,000 shots, against IBM's 44 |
-| M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | CPU build identical to IBM's on 12 of 12 shots so far |
-| M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | CUDA kernel written and compiled; first T4 run next |
+| M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | done: CPU build identical on 12 of 12 shots, GPU build on 64 of 64 |
+| M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | first T4 run done: identical to IBM on 64 of 64 shots; 2 to 6× one CPU core, not yet fast |
 | M3 | Streaming (sliding-window) decoding, latency per round | planned |
 | M4 | Added to [parity](https://github.com/Shakhtar-Sankur/parity) next to BP-OSD and NVIDIA's decoder, on the same samples; write-up | planned |
 
@@ -75,6 +75,46 @@ many shots in flight. It is compiled with `-fmad=false`, because a fused multipl
 the reference rounds twice. [`bench/m2_gpu.py`](bench/m2_gpu.py) checks the GPU against IBM's decoder
 shot for shot, then times a batch and measures its logical error rate;
 [`notebooks/m2_kaggle.py`](notebooks/m2_kaggle.py) runs it on a Kaggle T4.
+
+### First T4 run (Kaggle, 22 Oct 2026)
+
+Raw output: [`results/m2/m2_t4_kaggle_log.jsonl`](results/m2/m2_t4_kaggle_log.jsonl).
+
+**Identical to IBM's decoder on every shot.** The same shots and memory-strength table went through
+IBM's Rust decoder (`RelayDecoderF64`) on the CPU and through the CUDA kernel on the T4:
+
+| p | Shots | Decodings | Posteriors (float64) | Success | Iterations | Largest posterior difference | Relay legs used |
+|---|---|---|---|---|---|---|---|
+| 0.3% | 32 | 32 / 32 | 32 / 32 | 32 / 32 | 32 / 32 | 0.0 | 5 to 28 |
+| 0.4% | 32 | 32 / 32 | 32 / 32 | 32 / 32 | 32 / 32 | 0.0 | 5 to 301 |
+
+One shot at p = 0.4% ran all 301 legs (the pre-leg and all 300 relay legs), so the comparison covers
+the longest path through the decoder as well as the common one.
+
+**Speed: correct, not yet fast.**
+
+| | IBM's decoder, one CPU core | syndrome, T4 | Per shot |
+|---|---|---|---|
+| 32 shots, p = 0.3% | 1.65 s per shot | 8.8 s for the batch | 6.0× one core |
+| 32 shots, p = 0.4% | 5.46 s per shot | 84.8 s for the batch (one shot took all 301 legs) | 2.1× one core |
+| 2,048 shots, p = 0.3% (256 in flight) | 1.65 s per shot | 810 s for the batch, 0.40 s per shot | 4.2× one core |
+
+A Kaggle CPU has 4 threads, so on the same machine the GPU is roughly level with IBM's decoder on all
+of them. Three reasons, and what M3 changes:
+
+- **float64 on a T4.** The T4 runs float64 at 1/32 of its float32 rate, and every message here is
+  float64 because it has to match the reference bit for bit. A data-centre GPU (A100, H100) runs
+  float64 at half its float32 rate. IBM also ships a float32 decoder (`RelayDecoderF32`); matching
+  that one bit for bit allows float32 throughout.
+- **One thread block per shot.** Each block walks 391,320 edges per iteration with little reuse, and
+  a batch finishes only when its slowest shot does (up to 301 legs). Next: several shots per block over
+  shared graph data, and refilling a slot as soon as its shot finishes.
+- **More shots in flight was slower per shot** (0.40 s at 256 in flight against 0.28 s at 32), which
+  points at memory bandwidth rather than arithmetic as the limit.
+
+The 2,048-shot batch had 0 logical errors, with every shot converged; IBM's published rate at
+p = 0.3% (40 in 100,000) predicts 0.8 errors in 2,048 shots, so this run cannot measure accuracy and
+was not meant to: the identity check above is what shows the GPU decodes as IBM's decoder does.
 
 ## License
 
