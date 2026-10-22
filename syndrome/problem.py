@@ -151,3 +151,41 @@ def decode_cuda(problem, params, gammas, syndromes, want_decodings=False, want_p
     if rc != 0:
         raise RuntimeError(f"relay_bp_decode_cuda ({dtype}, {schedule}) failed with {rc}")
     return dec, post, obs, succ, iters, legs, ms.value, used.value
+
+
+def decode_cuda_latency(problem, params, gammas, syndromes, want_decodings=False, want_posteriors=False,
+                        blocks=0, threads=256, dtype="f32"):
+    """Decode shots one after another, each on the whole GPU (a cooperative grid of `blocks` blocks;
+    0: as many as fit). Returns (decodings, posteriors, observables, success, iterations, legs,
+    shot_ms, kernel_ms, blocks_used), where shot_ms holds each shot's time on the GPU."""
+    global _CUDA
+    if _CUDA is None:
+        _CUDA = ctypes.CDLL(str(Path(__file__).resolve().parent.parent / "csrc" / "libsyndrome_cuda.so"))
+    nt, ct, lp, wp = _messages(problem, dtype)
+    syn = np.ascontiguousarray(syndromes, dtype=np.uint8)
+    n = syn.shape[0]
+    gam = np.ascontiguousarray(gammas, dtype=nt)
+    dec = np.zeros((n, problem.n_vars), dtype=np.uint8) if want_decodings else None
+    post = np.zeros((n, problem.n_vars), dtype=nt) if want_posteriors else None
+    obs = np.zeros((n, problem.n_obs), dtype=np.uint8) if problem.n_obs else None
+    succ, iters, legs = (np.zeros(n, dtype=np.int32) for _ in range(3))
+    shot_ns = np.zeros(n, dtype=np.uint64)
+    ms = ctypes.c_float(0.0)
+    used = ctypes.c_int(0)
+    i32, u8 = ctypes.c_int32, ctypes.c_uint8
+    fn = _CUDA.relay_bp_latency_cuda if dtype == "f64" else _CUDA.relay_bp_latency_cuda_f32
+    rc = fn(
+        problem.n_checks, problem.n_vars, problem.n_edges,
+        _ptr(problem.row_ptr, i32), _ptr(problem.edge_var, i32), _ptr(problem.col_ptr, i32),
+        _ptr(problem.col_edges, i32), _ptr(lp, ct), *wp,
+        ct(params.alpha), ct(params.gamma0), params.pre_iter, params.num_sets, params.set_max_iter,
+        params.stop_nconv, gam.shape[0], _ptr(gam, ct),
+        problem.n_obs, _ptr(problem.obs_row_ptr, i32), _ptr(problem.obs_cols, i32),
+        n, _ptr(syn, u8),
+        _ptr(dec, u8) if dec is not None else None, _ptr(post, ct) if post is not None else None,
+        _ptr(obs, u8) if obs is not None else None,
+        _ptr(succ, i32), _ptr(iters, i32), _ptr(legs, i32), blocks, threads,
+        ctypes.byref(used), ctypes.byref(ms), _ptr(shot_ns, ctypes.c_uint64))
+    if rc != 0:
+        raise RuntimeError(f"relay_bp_latency_cuda ({dtype}) failed with {rc}")
+    return dec, post, obs, succ, iters, legs, shot_ns.astype(np.float64) / 1e6, ms.value, used.value
