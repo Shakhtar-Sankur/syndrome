@@ -110,7 +110,7 @@ of them. Three reasons, and what M3 changes:
   a batch finishes only when its slowest shot does (up to 301 legs). Next: several shots per block over
   shared graph data, and refilling a slot as soon as its shot finishes.
 - **More shots in flight was slower per shot** (0.40 s at 256 in flight against 0.28 s at 32), which
-  points at memory bandwidth rather than arithmetic as the limit.
+  suggests memory bandwidth rather than arithmetic is the limit; M3 profiles it to confirm.
 
 The 2,048-shot batch had 0 logical errors, with every shot converged; IBM's published rate at
 p = 0.3% (40 in 100,000) predicts 0.8 errors in 2,048 shots, so this run cannot measure accuracy and
