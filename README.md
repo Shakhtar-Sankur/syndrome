@@ -17,7 +17,7 @@ Rules the project keeps:
 - **Reproduce first.** IBM's own decoder, on IBM's own circuits, must reproduce IBM's published
   numbers here before anything is compared with it.
 - **Same answers, then speed.** The GPU decoder must give the same decoding as IBM's reference
-  on every shot, in float64, before its speed is measured.
+  on every shot, in float64 and in float32, before its speed is measured.
 - **Report the machine and the losses.** Every number records the hardware, versions, seeds and
   shot counts, including results that do not go our way.
 
@@ -27,7 +27,7 @@ Rules the project keeps:
 |---|---|---|
 | M0 | Run IBM's Relay-BP on IBM's gross-code circuits and reproduce IBM's results | done: 41 logical errors in 10,000 shots, against IBM's 44 |
 | M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | done: CPU build identical on 12 of 12 shots, GPU build on 64 of 64 |
-| M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | first T4 run done: identical to IBM on 64 of 64 shots; 2 to 6× one CPU core, not yet fast |
+| M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | done: identical to IBM on 256 of 256 shots (float64 and float32); 4.0× IBM's decoder on all 4 CPU threads of the same machine, same predictions on 1,024 of 1,024 shots |
 | M3 | Streaming (sliding-window) decoding, latency per round | planned |
 | M4 | Added to [parity](https://github.com/Shakhtar-Sankur/parity) next to BP-OSD and NVIDIA's decoder, on the same samples; write-up | planned |
 
@@ -115,6 +115,58 @@ of them. Three reasons, and what M3 changes:
 The 2,048-shot batch had 0 logical errors, with every shot converged; IBM's published rate at
 p = 0.3% (40 in 100,000) predicts 0.8 errors in 2,048 shots, so this run cannot measure accuracy and
 was not meant to: the identity check above is what shows the GPU decodes as IBM's decoder does.
+
+### Second T4 run: float32 and one warp per check (Kaggle, 22 Oct 2026)
+
+Raw output: [`results/m2/m2_t4_f64_f32_kaggle_log.jsonl`](results/m2/m2_t4_f64_f32_kaggle_log.jsonl).
+Three changes since the first run:
+
+- **float32 messages**, matching IBM's `RelayDecoderF32` bit for bit. The core is templated on the
+  message type; as in IBM's code, the decoding weight that picks between legs is still summed in
+  float64. On the CPU, the float32 build matched `RelayDecoderF32` on 128 of 128 shots before the
+  GPU run.
+- **One warp per check.** A gross-code check has about 226 edges. One thread per check read them one
+  after another, with the 32 threads of a warp reading 32 far-apart places; now the 32 lanes read a
+  check's edges side by side and combine their two smallest magnitudes and sign parities with
+  shuffles. The two smallest values of a set and the parity of its signs do not depend on the order
+  they are taken in, so this changes no bits.
+- **A shared shot queue.** A block takes the next shot from a counter when it finishes one, so shots
+  that need many legs no longer hold back a fixed share of the batch; the grid holds as many blocks as
+  the GPU runs at once (120 on a T4 at 256 threads).
+
+**Identical to IBM's decoder on every shot, in both precisions and both schedules:**
+
+| Messages | Schedule | p = 0.3% (32 shots) | p = 0.4% (32 shots) | Largest posterior difference | Relay legs used |
+|---|---|---|---|---|---|
+| float64 vs `RelayDecoderF64` | thread per check | 32 / 32 | 32 / 32 | 0.0 | 5 to 301 |
+| float64 vs `RelayDecoderF64` | warp per check | 32 / 32 | 32 / 32 | 0.0 | 5 to 301 |
+| float32 vs `RelayDecoderF32` | thread per check | 32 / 32 | 32 / 32 | 0.0 | 5 to 301 |
+| float32 vs `RelayDecoderF32` | warp per check | 32 / 32 | 32 / 32 | 0.0 | 5 to 301 |
+
+Each entry counts shots where the decoding, every posterior, the success flag and the iteration
+count all match.
+
+**Speed: 4.0× IBM's decoder on the whole CPU.** 1,024 shots at p = 0.3% on the T4, and the same
+1,024 shots through IBM's decoder in its parallel batch mode on all 4 CPU threads of the same
+Kaggle machine:
+
+| Messages | IBM, all 4 CPU threads | syndrome, thread per check | syndrome, warp per check | Warp per check against IBM |
+|---|---|---|---|---|
+| float64 | 1,051 ms per shot | 453 ms per shot | 298 ms per shot | **3.5×** |
+| float32 | 790 ms per shot | 330 ms per shot | **199 ms per shot** | **4.0×** |
+
+- Against one CPU thread (1.22 s per shot in float32 at p = 0.3%), the float32 kernel is 6.2× faster.
+  IBM's batch mode gained only 1.6× from the machine's 4 threads, so this CPU is a small one; a
+  larger server would narrow the gap, and the comparison that settles it is per watt or per dollar
+  on matched hardware, which is still to do.
+- One warp per check made the kernel 1.5× (float64) and 1.7× (float32) faster; float32 made it
+  1.5× faster again. Against the first run (400 ms per shot, float64, one thread per check), the
+  best configuration is 2.0× faster per shot.
+- **The same answers at scale:** in every configuration the GPU and IBM predicted the same logical
+  observables on 1,024 of 1,024 shots, all converged, with 0 logical errors for both.
+- **Throughput, not latency.** With 120 shots in flight each shot spends about 24 s on the GPU;
+  on a small batch (32 shots, one of them taking all 301 legs) the warp schedule was no faster in
+  float64. Latency per round is M3's subject.
 
 ## License
 
