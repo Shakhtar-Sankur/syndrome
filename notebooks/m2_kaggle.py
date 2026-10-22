@@ -22,7 +22,7 @@ sh("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv")
 
 # IBM's decoder is Rust with Python bindings: install a Rust toolchain, then the package.
 sh("curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal")
-os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + os.environ["PATH"]
+os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":/usr/local/cuda/bin:" + os.environ["PATH"]
 sh(f"{sys.executable} -m pip install -q stim sinter ./relay")
 
 # The CUDA kernel, built for the GPU in this session (sm_75 on a T4, sm_60 on a P100).
