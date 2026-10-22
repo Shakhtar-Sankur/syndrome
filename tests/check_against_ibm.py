@@ -1,6 +1,7 @@
 """Decode the same shots with IBM's Rust Relay-BP and with syndrome's core; compare every output.
 
     python tests/check_against_ibm.py --relay-repo ../relay-ref --p 0.004 --shots 16
+    python tests/check_against_ibm.py --relay-repo ../relay-ref --dtype f32   # against RelayDecoderF32
 """
 import argparse
 import sys
@@ -20,6 +21,7 @@ ap.add_argument("--relay-repo", type=Path, required=True)
 ap.add_argument("--p", default="0.004")
 ap.add_argument("--shots", type=int, default=16)
 ap.add_argument("--gamma-rows", type=int, default=300)
+ap.add_argument("--dtype", choices=["f64", "f32"], default="f64")
 a = ap.parse_args()
 
 name = (f"circuit=bicycle_bivariate_144_12_12_memory_Z,distance=12,rounds=12,error_rate={a.p},"
@@ -35,14 +37,16 @@ syn = det.astype(np.uint8)
 if cm.syndrome_bias is not None:
     syn = (syn + cm.syndrome_bias) % 2
 
-ibm = relay_bp.RelayDecoderF64(
+ref_decoder = relay_bp.RelayDecoderF64 if a.dtype == "f64" else relay_bp.RelayDecoderF32
+ibm = ref_decoder(
     cm.check_matrix, error_priors=cm.error_priors, alpha=par.alpha, gamma0=par.gamma0,
     pre_iter=par.pre_iter, num_sets=par.num_sets, set_max_iter=par.set_max_iter,
     gamma_dist_interval=par.gamma_interval, explicit_gammas=gam, stop_nconv=par.stop_nconv)
 t0 = time.time()
 ref = [ibm.decode_detailed(s) for s in syn]
 t1 = time.time()
-dec, post, succ, iters, legs = decode_cpu(prob, par, gam, syn, want_posteriors=True)
+dec, post, succ, iters, legs = decode_cpu(prob, par, gam, syn, want_posteriors=True, dtype=a.dtype)
+post = post.astype(np.float64)  # IBM returns the posteriors as float64 whatever the message type
 t2 = time.time()
 
 same = 0
@@ -60,6 +64,6 @@ for i, r in enumerate(ref):
         d = np.abs(np.asarray(r.posterior_ratios) - post[i]).max()
         print(f"shot {i}: differs in {bad}; max |posterior diff| {d:.3e}; "
               f"iters ibm {r.iterations} ours {iters[i]}; legs ours {legs[i]}")
-print(f"{same}/{len(ref)} shots identical in decoding, float64 posteriors, success and iterations")
+print(f"{same}/{len(ref)} shots identical in decoding, {a.dtype} posteriors, success and iterations")
 print(f"IBM {1e3*(t1-t0)/len(ref):.0f} ms/shot (1 thread); ours {1e3*(t2-t1)/len(ref):.0f} ms/shot wall "
       f"({len(ref)} shots over OpenMP threads); legs used: {np.bincount(legs).nonzero()[0].tolist()}")
