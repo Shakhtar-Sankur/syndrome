@@ -25,8 +25,11 @@ sh("curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal")
 os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + os.environ["PATH"]
 sh(f"{sys.executable} -m pip install -q stim sinter ./relay")
 
-# The CUDA kernel. -fmad=false keeps every rounding step the same as IBM's float64 code.
-sh("cd syndrome/csrc && nvcc -O3 -fmad=false -std=c++17 -arch=sm_75 -Xcompiler -fPIC -shared "
+# The CUDA kernel, built for the GPU in this session (sm_75 on a T4, sm_60 on a P100).
+# -fmad=false keeps every rounding step the same as IBM's float64 code.
+cc = subprocess.run("nvidia-smi --query-gpu=compute_cap --format=csv,noheader", shell=True,
+                    capture_output=True, text=True).stdout.split()[0].replace(".", "")
+sh(f"cd syndrome/csrc && nvcc -O3 -fmad=false -std=c++17 -arch=sm_{cc} -Xcompiler -fPIC -shared "
    "-o libsyndrome_cuda.so relay_bp_cuda.cu")
 
 sh(f"set -o pipefail; {sys.executable} syndrome/bench/m2_gpu.py --relay-repo relay "
