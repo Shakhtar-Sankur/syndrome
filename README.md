@@ -28,7 +28,7 @@ Rules the project keeps:
 | M0 | Run IBM's Relay-BP on IBM's gross-code circuits and reproduce IBM's results | done: 41 logical errors in 10,000 shots, against IBM's 44 |
 | M1 | Relay-BP core in C++/CUDA (one source for CPU and GPU), identical to IBM's on every shot | done: CPU build identical on 12 of 12 shots, GPU build on 64 of 64 |
 | M2 | Batched GPU decoding on a T4: shots per second and latency per shot against IBM's CPU decoder | done: identical to IBM on 256 of 256 shots (float64 and float32); 4.0× IBM's decoder on all 4 CPU threads of the same machine, same predictions on 1,024 of 1,024 shots |
-| M3 | Streaming (sliding-window) decoding, latency per round | planned |
+| M3 | Latency: one shot on the whole GPU (M3a), then streaming (sliding-window) decoding per round | M3a done: identical to IBM on 256 of 256 shots; median 37.5 ms per shot, 28.7× IBM's decoder (float32, T4) |
 | M4 | Added to [parity](https://github.com/Shakhtar-Sankur/parity) next to BP-OSD and NVIDIA's decoder, on the same samples; write-up | planned |
 
 ## M0: IBM's decoder on IBM's circuits
@@ -169,6 +169,47 @@ Kaggle machine:
 - **Throughput, not latency.** With 120 shots in flight each shot spends about 24 s on the GPU;
   on a small batch (32 shots, one of them taking all 301 legs) the warp schedule was no faster in
   float64. Latency per round is M3's subject.
+
+## M3a: latency, one shot on the whole GPU
+
+The batch kernel gives each shot one thread block, so a single shot uses a small part of the GPU and
+takes seconds. Latency mode ([`csrc/relay_bp_cuda.cu`](csrc/relay_bp_cuda.cu), `relay_bp_latency_cuda`)
+decodes one shot at a time with every thread of the GPU: a cooperative grid runs the same leg loop with
+grid-wide barriers. The satisfied-check of iteration *i − 1* shares a phase with the check update of
+iteration *i* (it reads only the hard decisions, and if the leg has converged the extra check messages
+are discarded), so an iteration costs two grid barriers. The decoding weight that breaks ties between
+legs stays bit-identical to the sequential sum: each block lists its flipped variables in order with
+warp ballots, and one thread adds them in index order.
+
+[`bench/m3_latency.py`](bench/m3_latency.py) times every shot on the GPU against IBM's decoder on the
+same shots. IBM's decoder handles one shot on one CPU thread, so for a single shot that is the
+comparison: one CPU thread against the whole GPU. Every shot is also checked bit for bit.
+
+### T4 run (Kaggle, 22 Oct 2026)
+
+Raw output: [`results/m3/m3_t4_latency_kaggle_log.jsonl`](results/m3/m3_t4_latency_kaggle_log.jsonl).
+A sweep on 16 shots chose 512 threads per block (40 blocks, one per multiprocessor); 1,024 threads do
+not fit on a T4 multiprocessor at this register count.
+
+| Messages | p | Shots identical to IBM | GPU per shot, median (p90) | IBM, one CPU thread, median (p90) | Median speed-up |
+|---|---|---|---|---|---|
+| float32 | 0.3% | **64 / 64** | **37.5 ms** (114 ms) | 1,078 ms (2,986 ms) | **28.7×** |
+| float32 | 0.4% | **64 / 64** | **75.9 ms** (391 ms) | 2,057 ms (10,835 ms) | **27.1×** |
+| float64 | 0.3% | **64 / 64** | 76.8 ms (188 ms) | 1,208 ms (2,928 ms) | 15.7× |
+| float64 | 0.4% | **64 / 64** | 176.7 ms (1,267 ms) | 2,744 ms (19,326 ms) | 15.5× |
+
+- **The same answers, one shot at a time:** every decoding, posterior, success flag and iteration count
+  matched IBM's on all 256 shots, including shots that ran all 301 relay legs.
+- **About 0.10 ms per iteration** in float32 (0.22 ms in float64) over the gross code's 391,320 edges.
+  The time per shot follows the iteration count, which varies widely from shot to shot (median 362,
+  maximum 8,209 at p = 0.3%); the slowest shot took 823 ms on the GPU against 24.2 s for IBM's decoder.
+- **Throughput as a side effect:** decoding the 64 shots one after another took 64 ms per shot on
+  average in float32 at p = 0.3%, against 199 ms per shot for the batch kernel in M2 (on a different
+  sample of shots at the same noise rate); one shot on the whole GPU uses its memory better than many
+  shots on one block each.
+- **Still far from real time.** A superconducting quantum computer produces a syndrome round about
+  every microsecond; 37.5 ms for 12 rounds is about 3 ms per round. Sliding-window decoding (M3b) is
+  the next step, with its error-rate cost reported alongside.
 
 ## License
 
