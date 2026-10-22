@@ -23,7 +23,9 @@ sh("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv")
 # IBM's decoder is Rust with Python bindings: install a Rust toolchain, then the package.
 sh("curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal")
 os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":/usr/local/cuda/bin:" + os.environ["PATH"]
-sh(f"{sys.executable} -m pip install -q stim sinter ./relay")
+# Same versions as the M0 and M1 runs; relay's [stim] extra brings beliefmatching, which
+# relay_bp.stim uses to turn a circuit into check matrices.
+sh(f"{sys.executable} -m pip install -q stim==1.16.0 sinter==1.16.0 beliefmatching==0.2.0 './relay[stim]'")
 
 # The CUDA kernel, built for the GPU in this session (sm_75 on a T4, sm_60 on a P100).
 # -fmad=false keeps every rounding step the same as IBM's float64 code.
